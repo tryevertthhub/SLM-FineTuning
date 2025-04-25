@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 from huggingface_hub import interpreter_login
 from transformers import set_seed
+from functools import partial
 
 # interpreter_login()
 
@@ -62,3 +63,41 @@ inputs = tokenizer(formatted_prompt, return_tensors="pt").to(original_model.devi
 
 outputs = original_model.generate(**inputs, max_length=200)
 text = tokenizer.decode(outputs)[0]
+
+def create_prompt_formats(sample):
+    """
+    Format various fields of the sample ('instruction','output')
+    Then concatenate them using two newline characters 
+    :param sample: Sample dictionnary
+    """
+    INTRO_BLURB = "Below is an instruction that describes a task. Write a response that appropriately completes the request."
+    INSTRUCTION_KEY = "### Instruct: Summarize the below conversation."
+    RESPONSE_KEY = "### Output:"
+    END_KEY = "### End"
+    
+    blurb = f"\n{INTRO_BLURB}"
+    instruction = f"{INSTRUCTION_KEY}"
+    input_context = f"{sample['dialogue']}" if sample["dialogue"] else None
+    response = f"{RESPONSE_KEY}\n{sample['summary']}"
+    end = f"{END_KEY}"
+    
+    parts = [part for part in [blurb, instruction, input_context, response, end] if part]
+
+    formatted_prompt = "\n\n".join(parts)
+    sample["text"] = formatted_prompt
+
+    return 
+
+def get_max_length(model):
+    conf = model.config
+    max_length = None
+    for length_setting in ["n_positions", "max_position_embeddings", "seq_length"]:
+        max_length = getattr(model.config, length_setting, None)
+        if max_length:
+            print(f"Found max lenth: {max_length}")
+            break
+    if not max_length:
+        max_length = 1024
+        print(f"Using default max length: {max_length}")
+    return max_length
+
