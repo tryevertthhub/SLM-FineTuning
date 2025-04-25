@@ -7,7 +7,8 @@ from transformers import (
     AutoTokenizer,
     TrainingArguments,
     Trainer,
-    GenerationConfig
+    GenerationConfig,
+    DataCollatorForLanguageModeling
 )
 from tqdm import tqdm
 from trl import SFTTrainer
@@ -18,6 +19,9 @@ import numpy as np
 from huggingface_hub import interpreter_login
 from transformers import set_seed
 from functools import partial
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+import transformers
+
 
 # interpreter_login()
 
@@ -136,3 +140,67 @@ def preprocess_dataset(tokenizer: AutoTokenizer, max_length: int,seed, dataset):
     dataset = dataset.shuffle(seed=seed)
 
     return dataset
+
+## Pre-process dataset
+max_length = get_max_length(original_model)
+print(max_length)
+
+train_dataset = preprocess_dataset(tokenizer, max_length,seed, dataset['train'])
+eval_dataset = preprocess_dataset(tokenizer, max_length,seed, dataset['validation'])
+
+# Preparing the Model for QLoRA
+original_model = prepare_model_for_kbit_training(original_model)
+
+# Create LoRA configuration
+config = LoraConfig(
+    r=32,
+    lora_alpha=32,
+    target_modules=[
+        'q_proj',
+        'k_proj',
+        'v_proj',
+        'dense'
+    ],
+    bias="none",
+    task_type="CAUSAL_LM",
+    lora_dropout=0.05
+)
+
+# enabling gradient checkpointing to reduce memory usage during fine-tuning
+original_model.gradient_checkpointing_enable()
+peft_model = get_peft_model(original_model, config)
+output_dir = f'./peft-dialogue-summary-training-{str(int(time.time()))}'
+
+peft_training_args = TrainingArguments(
+    output_dir = output_dir,
+    warmup_steps=1,
+    per_device_train_batch_size=1,
+    gradient_accumulation_steps=4,
+    max_steps=1000,
+    learning_rate=2e-4,
+    optim="paged_adamw_8bit",
+    logging_steps=25,
+    logging_dir="./logs",
+    save_strategy="steps",
+    save_steps=25,
+    evaluation_strategy="steps",
+    eval_steps=25,
+    do_eval=True,
+    gradient_checkpointing=True,
+    report_to="none",
+    overwrite_output_dir = 'True',
+    group_by_length=True,
+)
+peft_model.config.use_cache = False
+
+peft_trainer = Trainer(
+    model=peft_model,
+    args=peft_training_args,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
+)
+
+peft_trainer.train()
+
+
