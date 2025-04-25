@@ -101,3 +101,12 @@ def get_max_length(model):
         print(f"Using default max length: {max_length}")
     return max_length
 
+def preprocess_batch(batch, tokenizer, max_length):
+    """
+    Tokenizing a batch
+    """
+    return tokenizer(
+        batch["text"],
+        max_length=max_length,
+        truncation=True,
+    )
